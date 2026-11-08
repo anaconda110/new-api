@@ -109,3 +109,43 @@ func TestPoolMemberSnapshotDatabaseMatrix(t *testing.T) {
 		})
 	}
 }
+
+func TestChannelConsoleCredentialMatrix(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			var driver gorm.Dialector
+			switch dialect {
+			case "sqlite":
+				driver = sqlite.Open(":memory:")
+			case "mysql":
+				dsn := os.Getenv("TEST_MYSQL_DSN")
+				if dsn == "" {
+					t.Skip("TEST_MYSQL_DSN not configured")
+				}
+				driver = mysql.Open(dsn)
+			case "postgres":
+				dsn := os.Getenv("TEST_POSTGRES_DSN")
+				if dsn == "" {
+					t.Skip("TEST_POSTGRES_DSN not configured")
+				}
+				driver = postgres.Open(dsn)
+			}
+			db, err := gorm.Open(driver, &gorm.Config{})
+			require.NoError(t, err)
+			require.NoError(t, db.AutoMigrate(&ChannelConsoleCredential{}))
+			require.NoError(t, db.AutoMigrate(&ChannelConsoleCredential{}))
+
+			cred := &ChannelConsoleCredential{ChannelId: 7, Provider: "sensenova",
+				Username: "acct", Password: "pw", RefreshToken: "rt", TokenExpiresAt: 100}
+			require.NoError(t, db.Create(cred).Error)
+			cred.AccessToken = "at"
+			require.NoError(t, db.Save(cred).Error)
+
+			var stored ChannelConsoleCredential
+			require.NoError(t, db.Where("channel_id = ?", 7).First(&stored).Error)
+			assert.Equal(t, "sensenova", stored.Provider)
+			assert.Equal(t, "at", stored.AccessToken)
+			assert.Equal(t, int64(100), stored.TokenExpiresAt)
+		})
+	}
+}

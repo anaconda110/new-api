@@ -2,7 +2,6 @@ package service
 
 import (
 	"sync"
-	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
@@ -18,11 +17,29 @@ type QuotaCollector interface {
 }
 
 var (
-	quotaCollectorsMu     sync.RWMutex
-	quotaCollectorsByType = make(map[int]QuotaCollector)
-	defaultQuotaCollector QuotaCollector
-	poolQuotaWarmupOnce   sync.Once
+	quotaCollectorsMu          sync.RWMutex
+	quotaCollectorsByType      = make(map[int]QuotaCollector)
+	credentialCollectorsByProv = make(map[string]QuotaCollector)
+	defaultQuotaCollector      QuotaCollector
+	poolQuotaWarmupOnce        sync.Once
 )
+
+// RegisterCredentialCollector wires a collector for channels that carry a
+// console credential of the given provider (the second credential set some
+// platforms need for quota reads). It overrides type-based resolution.
+func RegisterCredentialCollector(provider string, collector QuotaCollector) {
+	quotaCollectorsMu.Lock()
+	defer quotaCollectorsMu.Unlock()
+	credentialCollectorsByProv[provider] = collector
+}
+
+// CredentialCollectorFor returns the collector registered for a console
+// credential provider.
+func CredentialCollectorFor(provider string) QuotaCollector {
+	quotaCollectorsMu.RLock()
+	defer quotaCollectorsMu.RUnlock()
+	return credentialCollectorsByProv[provider]
+}
 
 // RegisterQuotaCollector wires a collector for one channel type, overriding
 // the default collector for that type. Called from controller init() because
@@ -107,29 +124,44 @@ func RunPoolQuotaCollection() int {
 			if channel.Status != common.ChannelStatusEnabled {
 				continue
 			}
-			for _, member := range ExpandPoolMembers(channel) {
-				collector := quotaCollectorFor(channel.Type)
-				if collector == nil {
-					continue
+			members := ExpandPoolMembers(channel)
+			if len(members) == 0 {
+				continue
+			}
+			// Console credentials drive collection per channel (quota is
+			// account-level on such platforms), so one fetch serves every key.
+			var collector QuotaCollector
+			var credKeyIndex = -1
+			if cred, credErr := model.GetChannelConsoleCredential(channel.Id); credErr == nil && cred != nil {
+				collector = CredentialCollectorFor(cred.Provider)
+			} else {
+				collector = quotaCollectorFor(channel.Type)
+				if len(members) == 1 {
+					credKeyIndex = members[0].KeyIndex
 				}
-				windows, err := collector.Collect(channel, member.KeyIndex)
-				unknown := err != nil
-				if unknown {
-					common.SysError(common.LogText(
-						"pool %s: quota collection failed for member %s (channel #%d, marked unknown, channel stays enabled): %v",
-						pool.Tag, member.String(), channel.Id, err,
-					))
-				}
-				snapshots := make([]model.PoolMemberWindow, 0, len(windows))
-				for _, window := range windows {
-					snapshots = append(snapshots, model.PoolMemberWindow{
-						Remaining:   window.Remaining,
-						Capacity:    window.Capacity,
-						ExpiryAt:    window.ExpiryAt,
-						ShortWindow: window.ShortWindow,
-						Source:      window.Source,
-					})
-				}
+			}
+			if collector == nil {
+				continue
+			}
+			windows, err := collector.Collect(channel, credKeyIndex)
+			unknown := err != nil
+			if unknown {
+				common.SysError(common.LogText(
+					"pool %s: quota collection failed for channel #%d (marked unknown, channel stays enabled): %v",
+					pool.Tag, channel.Id, err,
+				))
+			}
+			snapshots := make([]model.PoolMemberWindow, 0, len(windows))
+			for _, window := range windows {
+				snapshots = append(snapshots, model.PoolMemberWindow{
+					Remaining:   window.Remaining,
+					Capacity:    window.Capacity,
+					ExpiryAt:    window.ExpiryAt,
+					ShortWindow: window.ShortWindow,
+					Source:      window.Source,
+				})
+			}
+			for _, member := range members {
 				SetMemberWindows(pool.Tag, member, toServiceWindows(snapshots), unknown)
 				if storeErr := model.UpsertPoolMemberSnapshot(&model.PoolMemberSnapshot{
 					ChannelId:    channel.Id,
@@ -141,9 +173,6 @@ func RunPoolQuotaCollection() int {
 					common.SysError(common.LogText("pool %s: failed to persist snapshot for member %s: %v", pool.Tag, member.String(), storeErr))
 				}
 				collected++
-				// Collection runs in the background; keep the per-member pace
-				// gentle so upstream console endpoints are not hammered.
-				time.Sleep(200 * time.Millisecond)
 			}
 		}
 	}

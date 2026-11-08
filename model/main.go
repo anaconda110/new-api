@@ -358,6 +358,7 @@ func migrateDB() error {
 		&Task{},
 		&TaskPlugin{},
 		&PoolMemberSnapshot{},
+		&ChannelConsoleCredential{},
 		&Model{},
 		&Vendor{},
 		&PrefillGroup{},

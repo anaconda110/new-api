@@ -457,3 +457,26 @@ func TestPoolStrictRotateOn429(t *testing.T) {
 	decision = DecideRelayRetry(c, types.NewError(assert.AnError, types.ErrorCodeChannelNoAvailableKey), 3)
 	assert.Equal(t, "stop", decision.Action)
 }
+
+func TestSensenovaPoolUsageMapping(t *testing.T) {
+	body := []byte(`{"plan":{"name":"Token Plan"},"pools":[
+		{"name":"通用积分池","pool_type":"general",
+		 "window_5h":{"limit":120000,"remaining":60000,"reset_at":1800000000},
+		 "window_7d":{"limit":1200000,"remaining":1000000,"reset_at":1900000000}},
+		{"name":"Flash-Lite积分池","pool_type":"dedicated","model_ids":["sensenova-6.8-flash-lite"],
+		 "window_5h":{"limit":50000,"remaining":50000,"reset_at":1800000000}}]}`)
+	windows, err := sensenovaMapPoolUsage(body)
+	require.NoError(t, err)
+	require.Len(t, windows, 3)
+
+	assert.Equal(t, 60000.0, windows[0].Remaining)
+	assert.Equal(t, 120000.0, windows[0].Capacity)
+	assert.True(t, windows[0].ShortWindow)
+	assert.Equal(t, "collector", windows[0].Source)
+	assert.Equal(t, int64(1800000000), windows[0].ExpiryAt.Unix())
+
+	assert.False(t, windows[1].ShortWindow)
+	assert.Equal(t, 1000000.0, windows[1].Remaining)
+
+	assert.Equal(t, 50000.0, windows[2].Remaining)
+}

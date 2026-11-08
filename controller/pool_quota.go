@@ -2,7 +2,9 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -161,4 +163,79 @@ func GetPoolStatus(c *gin.Context) {
 func TriggerPoolQuotaCollection(c *gin.Context) {
 	summary := service.RunPoolQuotaCollectionForced()
 	common.ApiSuccess(c, summary)
+}
+
+type consoleCredentialRequest struct {
+	Provider     string `json:"provider"`
+	Username     string `json:"username"`
+	Password     string `json:"password"`
+	RefreshToken string `json:"refresh_token"`
+}
+
+// SaveChannelConsoleCredential stores the second (console) credential of a
+// channel. The relay key stays untouched; values never round-trip to the
+// browser afterwards.
+func SaveChannelConsoleCredential(c *gin.Context) {
+	channelId, err := strconv.Atoi(c.Param("id"))
+	if err != nil || channelId <= 0 {
+		common.ApiError(c, errors.New("invalid channel id"))
+		return
+	}
+	var req consoleCredentialRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if req.Provider == "" || (req.Username == "" && req.RefreshToken == "") {
+		common.ApiError(c, errors.New("provider and username or refresh_token are required"))
+		return
+	}
+	cred := &model.ChannelConsoleCredential{
+		ChannelId:    channelId,
+		Provider:     req.Provider,
+		Username:     req.Username,
+		Password:     req.Password,
+		RefreshToken: req.RefreshToken,
+	}
+	if err := model.SaveChannelConsoleCredential(cred); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, nil)
+}
+
+// GetChannelConsoleCredential returns credential presence with secrets masked.
+func GetChannelConsoleCredential(c *gin.Context) {
+	channelId, err := strconv.Atoi(c.Param("id"))
+	if err != nil || channelId <= 0 {
+		common.ApiError(c, errors.New("invalid channel id"))
+		return
+	}
+	cred, err := model.GetChannelConsoleCredential(channelId)
+	if err != nil {
+		common.ApiSuccess(c, nil)
+		return
+	}
+	common.ApiSuccess(c, gin.H{
+		"provider":          cred.Provider,
+		"username":          cred.Username,
+		"has_password":      cred.Password != "",
+		"has_refresh_token": cred.RefreshToken != "",
+		"token_expires_at":  cred.TokenExpiresAt,
+		"updated_time":      cred.UpdatedTime,
+	})
+}
+
+// DeleteChannelConsoleCredential removes the console credential of a channel.
+func DeleteChannelConsoleCredential(c *gin.Context) {
+	channelId, err := strconv.Atoi(c.Param("id"))
+	if err != nil || channelId <= 0 {
+		common.ApiError(c, errors.New("invalid channel id"))
+		return
+	}
+	if err := model.DeleteChannelConsoleCredential(channelId); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, nil)
 }
