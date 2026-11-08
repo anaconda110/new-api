@@ -172,6 +172,73 @@ func GetChannel(
 	return &channel, err
 }
 
+// GetPriorityTierCandidatesFromDB is the DB-backed counterpart of the pool
+// candidate query: it mirrors GetChannel's query and tier selection but
+// returns every enabled channel of the selected priority tier instead of one
+// weighted-random pick. Used when the memory cache is disabled.
+func GetPriorityTierCandidatesFromDB(
+	group string,
+	modelName string,
+	retry int,
+	filters []dto.ChannelFilter,
+) ([]*Channel, error) {
+	var abilities []Ability
+	err := DB.Where(commonGroupCol+" = ? and model = ? and enabled = ?", group, modelName, true).Order("priority DESC, weight DESC").Find(&abilities).Error
+	if err != nil {
+		return nil, err
+	}
+	abilities = filterAbilitiesByConstraints(abilities, modelName, filters)
+	// Like the memory cache, retry with the routing name (for example without
+	// @ modifiers) when no channel serves the exact name.
+	if normalized := ratio_setting.RoutingMatchModelName(modelName); len(abilities) == 0 && normalized != "" && normalized != modelName {
+		err = DB.Where(commonGroupCol+" = ? and model = ? and enabled = ?", group, normalized, true).Order("priority DESC, weight DESC").Find(&abilities).Error
+		if err != nil {
+			return nil, err
+		}
+		abilities = filterAbilitiesByConstraints(abilities, modelName, filters)
+	}
+	if len(abilities) == 0 {
+		return nil, nil
+	}
+	priorities := make([]int64, 0)
+	seen := make(map[int64]bool)
+	for _, ability := range abilities {
+		priority := int64(0)
+		if ability.Priority != nil {
+			priority = *ability.Priority
+		}
+		if !seen[priority] {
+			seen[priority] = true
+			priorities = append(priorities, priority)
+		}
+	}
+	sort.Slice(priorities, func(i, j int) bool { return priorities[i] > priorities[j] })
+	if retry >= len(priorities) {
+		retry = len(priorities) - 1
+	}
+	targetPriority := priorities[retry]
+	abilities = lo.Filter(abilities, func(ability Ability, _ int) bool {
+		return ability.Priority == nil && targetPriority == 0 || ability.Priority != nil && *ability.Priority == targetPriority
+	})
+	ids := make([]int, 0, len(abilities))
+	seenChannel := make(map[int]bool)
+	for _, ability := range abilities {
+		if !seenChannel[ability.ChannelId] {
+			seenChannel[ability.ChannelId] = true
+			ids = append(ids, ability.ChannelId)
+		}
+	}
+	channels := make([]*Channel, 0, len(ids))
+	for _, id := range ids {
+		channel := Channel{}
+		if err := DB.First(&channel, "id = ?", id).Error; err != nil {
+			return nil, err
+		}
+		channels = append(channels, &channel)
+	}
+	return channels, nil
+}
+
 // filterAbilitiesByConstraints applies the same ChannelSatisfiesFilters
 // predicate used by the memory-cache path. A failed channel lookup fails
 // closed when a task-plugin identity is required and fails open otherwise.

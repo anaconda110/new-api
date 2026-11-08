@@ -158,3 +158,41 @@ func TestAutoDisableKeepsManualDisable(t *testing.T) {
 		}
 	}
 }
+
+func TestGetNextEnabledKeyExcluding(t *testing.T) {
+	channel := Channel{
+		Name: "multi-key-excluding",
+		Key:  "key-a\nkey-b\nkey-c",
+		ChannelInfo: ChannelInfo{
+			IsMultiKey:   true,
+			MultiKeySize: 3,
+			MultiKeyMode: constant.MultiKeyModeRandom,
+		},
+	}
+
+	key, index, err := channel.GetNextEnabledKeyExcluding(map[int]bool{0: true, 2: true})
+	require.Nil(t, err)
+	assert.Equal(t, "key-b", key)
+	assert.Equal(t, 1, index)
+
+	key, index, err = channel.GetNextEnabledKeyExcluding(nil)
+	require.Nil(t, err)
+	assert.NotEmpty(t, key)
+	assert.GreaterOrEqual(t, index, 0)
+	assert.Less(t, index, 3)
+
+	// When the exclusion removes every enabled key it is ignored, so callers
+	// degrade gracefully instead of failing closed.
+	key, index, err = channel.GetNextEnabledKeyExcluding(map[int]bool{0: true, 1: true, 2: true})
+	require.Nil(t, err)
+	assert.NotEmpty(t, key)
+	assert.GreaterOrEqual(t, index, 0)
+	assert.Less(t, index, 3)
+
+	// Disabled keys are skipped by the underlying status list, exclusion or not.
+	channel.ChannelInfo.MultiKeyStatusList = map[int]int{0: common.ChannelStatusAutoDisabled}
+	key, index, err = channel.GetNextEnabledKeyExcluding(map[int]bool{2: true})
+	require.Nil(t, err)
+	assert.Equal(t, "key-b", key)
+	assert.Equal(t, 1, index)
+}

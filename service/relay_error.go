@@ -1,6 +1,7 @@
 package service
 
 import (
+	"net/http"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -66,6 +67,13 @@ func ProcessChannelError(c *gin.Context, channelError types.ChannelError, err *t
 	}
 	upstreamURLs := common.UpstreamAddresses(c)
 	logger.LogError(c, common.LogText("channel error (channel #%d, status code: %d): %s", channelError.ChannelId, err.StatusCode, common.LocalLogPreview(err.MaskSensitiveErrorWithStatusCode(upstreamURLs...))))
+	if err.StatusCode == http.StatusTooManyRequests {
+		// An upstream 429 rests the serving pool member for the pool's
+		// configured duration instead of disabling the channel or key. The
+		// member returns to its position (or sinks to the back under the
+		// move_last policy) once the rest expires.
+		MarkPoolRateLimited(c, channelError.ChannelId)
+	}
 	if ShouldDisableChannel(err) && channelError.AutoBan {
 		reason := err.MaskSensitiveErrorWithStatusCode(upstreamURLs...)
 		gopool.Go(func() {

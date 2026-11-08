@@ -40,6 +40,15 @@ const (
 	ContextKeyChannelMultiKeyIndex     ContextKey = "channel_multi_key_index"
 	ContextKeyChannelKey               ContextKey = "channel_key"
 
+	// ContextKeyPoolSelectedKeyIndex carries the key index chosen by the pool
+	// strategy for the current attempt. SetupContextForSelectedChannel consumes
+	// it once and falls back to GetNextEnabledKey when absent.
+	ContextKeyPoolSelectedKeyIndex ContextKey = "pool_selected_key_index"
+
+	// ContextKeyPoolSelection records the pool scheduling decision (tag,
+	// strategy, member) of the current attempt for the consume log admin info.
+	ContextKeyPoolSelection ContextKey = "pool_selection"
+
 	// ContextKeyUpstreamRequestOrigin is the scheme and host of the last upstream
 	// request, which differs from the base URL for absolute Advanced Custom routes
 	// and for adaptors that build official endpoints themselves.

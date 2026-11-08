@@ -110,6 +110,10 @@ func main() {
 	// endpoint inference can read cached route settings on first request.
 	model.GetPricing()
 
+	// Warm pool quota windows from the persisted collector snapshots so
+	// window-aware pool strategies work before the first collection run.
+	service.WarmPoolSnapshots()
+
 	// 热更新配置
 	go model.SyncOptions(common.SyncFrequency)
 	go controller.SyncTaskPlugins()

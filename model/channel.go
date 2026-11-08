@@ -210,6 +210,15 @@ func (channel *Channel) GetKeys() []string {
 }
 
 func (channel *Channel) GetNextEnabledKey() (string, int, *types.NewAPIError) {
+	return channel.GetNextEnabledKeyExcluding(nil)
+}
+
+// GetNextEnabledKeyExcluding picks the next enabled key while skipping the
+// excluded key indexes (e.g. pool members resting after an upstream 429).
+// A nil map behaves exactly like GetNextEnabledKey. When the exclusion would
+// remove every enabled key it is ignored, so callers degrade gracefully
+// instead of failing closed.
+func (channel *Channel) GetNextEnabledKeyExcluding(excluded map[int]bool) (string, int, *types.NewAPIError) {
 	// If not in multi-key mode, return the original key string directly.
 	if !channel.ChannelInfo.IsMultiKey {
 		return channel.Key, 0, nil
@@ -238,12 +247,21 @@ func (channel *Channel) GetNextEnabledKey() (string, int, *types.NewAPIError) {
 		return common.ChannelStatusEnabled
 	}
 
-	// Collect indexes of enabled keys
+	// Collect indexes of enabled keys, then apply the caller's exclusion on
+	// top. If the exclusion removes every enabled key, ignore it and fall back
+	// to the unfiltered set.
 	enabledIdx := make([]int, 0, len(keys))
+	enabledIdxAll := make([]int, 0, len(keys))
 	for i := range keys {
 		if getStatus(i) == common.ChannelStatusEnabled {
-			enabledIdx = append(enabledIdx, i)
+			enabledIdxAll = append(enabledIdxAll, i)
+			if excluded == nil || !excluded[i] {
+				enabledIdx = append(enabledIdx, i)
+			}
 		}
+	}
+	if len(enabledIdx) == 0 {
+		enabledIdx = enabledIdxAll
 	}
 	// If no specific status list or none enabled, return an explicit error so caller can
 	// properly handle a channel with no available keys (e.g. mark channel disabled).

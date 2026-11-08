@@ -17,6 +17,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
+import type { PoolRateLimitPolicy, PoolStrategy } from './types'
+
 export const CHANNEL_PRIORITY_GUIDE_KEYS = {
   card: 'channels:priority-drag-guide:card:v1',
   table: 'channels:priority-drag-guide:v1',
@@ -579,3 +581,44 @@ export const CHANNEL_TYPE_WARNINGS: Record<number, string> = {
   8: 'If connecting to upstream One API or New API relay projects, use OpenAI type instead unless you know what you are doing',
   37: 'Dify channels only support chatflow and agent, and agent does not support images',
 }
+
+// ============================================================================
+// Pool Scheduling (from setting/pool_setting/pool_setting.go)
+// Label values are i18n keys; use t(value) when displaying.
+// ============================================================================
+
+export const POOL_STRATEGIES = [
+  'smart',
+  'ordered',
+  'exhaust_then_switch',
+  'round_robin',
+  'least_used',
+  'use_before_expiry',
+  'auth_weight',
+  'free_first',
+  'fastest',
+] as const
+
+export const POOL_STRATEGY_LABELS: Record<PoolStrategy, string> = {
+  smart: 'Smart',
+  ordered: 'Ordered',
+  exhaust_then_switch: 'Exhaust Then Switch',
+  round_robin: 'Round Robin',
+  least_used: 'Least Used',
+  use_before_expiry: 'Use Before Expiry',
+  auth_weight: 'Auth Weight',
+  free_first: 'Free First',
+  fastest: 'Fastest',
+}
+
+export const POOL_RATE_LIMIT_POLICY_LABELS: Record<
+  Exclude<PoolRateLimitPolicy, ''>,
+  string
+> = {
+  keep: 'Keep (default)',
+  move_last: 'Move to Last',
+}
+
+export const POOL_DEFAULT_QUOTA_REFRESH_MINUTES = 10
+
+export const POOL_DEFAULT_REST_SECONDS = 60

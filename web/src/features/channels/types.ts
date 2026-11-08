@@ -352,6 +352,89 @@ export interface TagOperationParams {
 }
 
 // ============================================================================
+// Pool Scheduling Types
+// ============================================================================
+
+export type PoolStrategy =
+  | 'smart'
+  | 'ordered'
+  | 'exhaust_then_switch'
+  | 'round_robin'
+  | 'least_used'
+  | 'use_before_expiry'
+  | 'auth_weight'
+  | 'free_first'
+  | 'fastest'
+
+export type PoolRateLimitPolicy = '' | 'keep' | 'move_last'
+
+export interface PoolManualWindow {
+  remaining: number
+  capacity?: number
+  expiry_hours: number
+  short_window?: boolean
+}
+
+export interface PoolMemberAnnotation {
+  free?: boolean
+  auth_weight?: number
+  manual_windows?: PoolManualWindow[]
+}
+
+export interface PoolConfig {
+  tag: string
+  strategy: PoolStrategy
+  rate_limit_policy: PoolRateLimitPolicy
+  rate_limit_rest_seconds: number
+  member_annotations?: Record<string, PoolMemberAnnotation>
+}
+
+export interface PoolMemberWindow {
+  remaining: number
+  capacity?: number
+  expiry_at?: string
+  short_window?: boolean
+  source?: string
+}
+
+export interface PoolMemberStatus {
+  channel_id: number
+  key_index: number
+  member: string
+  channel_name: string
+  channel_type: number
+  channel_status: number
+  collector: boolean
+  penalty: number
+  resting_until?: string
+  latency_ms: number
+  used_requests: number
+  quota_unknown: boolean
+  windows?: PoolMemberWindow[]
+  annotation: PoolMemberAnnotation
+}
+
+export interface PoolStatus {
+  tag: string
+  strategy: PoolStrategy
+  rate_limit_policy: string
+  rate_limit_rest_seconds: number
+  members: PoolMemberStatus[]
+}
+
+export interface PoolStatusResponse {
+  success: boolean
+  message?: string
+  data?: { pools: PoolStatus[] }
+}
+
+export interface PoolCollectResponse {
+  success: boolean
+  message?: string
+  data?: { collected: number }
+}
+
+// ============================================================================
 // Form Data Types
 // ============================================================================
 

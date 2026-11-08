@@ -25,7 +25,7 @@ import type {
   Row,
   ColumnDef,
 } from '@tanstack/react-table'
-import { Eye, EyeOff, RefreshCw } from 'lucide-react'
+import { Eye, EyeOff, RefreshCw, Waypoints } from 'lucide-react'
 import { useState, useMemo, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
@@ -112,6 +112,7 @@ export function ChannelsTable() {
     sensitiveVisible,
     setSensitiveVisible,
     priorityActionContainer,
+    setOpen,
   } = useChannels()
   const isMobile = useMediaQuery('(max-width: 640px)')
 
@@ -627,6 +628,22 @@ export function ChannelsTable() {
                     />
                   </TooltipTrigger>
                   <TooltipContent>{t('Refresh')}</TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <Button
+                        variant='ghost'
+                        size='icon'
+                        onClick={() => setOpen('pool-scheduling')}
+                        aria-label={t('Pool Scheduling')}
+                        className='text-muted-foreground hover:text-foreground size-8'
+                      />
+                    }
+                  >
+                    <Waypoints aria-hidden />
+                  </TooltipTrigger>
+                  <TooltipContent>{t('Pool Scheduling')}</TooltipContent>
                 </Tooltip>
               </>
             ),

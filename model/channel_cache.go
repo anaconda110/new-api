@@ -114,38 +114,33 @@ func SyncChannelCache(frequency int) {
 	}
 }
 
-func GetRandomSatisfiedChannel(
-	group string,
-	model string,
-	retry int,
-	filters []dto.ChannelFilter,
-) (*Channel, error) {
-	// if memory cache is disabled, get channel directly from database
-	if !common.MemoryCacheEnabled {
-		return GetChannel(group, model, retry, filters)
+// GetPriorityTierCandidates returns the enabled channels of the (group, model)
+// candidate set at the priority tier selected by retry (0 = highest tier),
+// after applying the request's channel filters. It is the candidate side of
+// GetRandomSatisfiedChannel and lets the pool strategy layer score the whole
+// tier instead of receiving a single weighted-random pick. It reads the
+// memory cache when enabled and falls back to the abilities table otherwise.
+func GetPriorityTierCandidates(group string, modelName string, retry int, filters []dto.ChannelFilter) ([]*Channel, error) {
+	if common.MemoryCacheEnabled {
+		channelSyncLock.RLock()
+		defer channelSyncLock.RUnlock()
+		return priorityTierCandidatesLocked(group, modelName, retry, filters)
 	}
+	return GetPriorityTierCandidatesFromDB(group, modelName, retry, filters)
+}
 
-	channelSyncLock.RLock()
-	defer channelSyncLock.RUnlock()
-
+func priorityTierCandidatesLocked(group string, modelName string, retry int, filters []dto.ChannelFilter) ([]*Channel, error) {
 	// First, try to find channels with the exact model name.
-	channels, _ := filterCandidateIDs(group2model2channels[group][model], model, filters)
+	channels, _ := filterCandidateIDs(group2model2channels[group][modelName], modelName, filters)
 
 	// If no channels found, try to find channels with the normalized model name.
 	if len(channels) == 0 {
-		normalizedModel := ratio_setting.RoutingMatchModelName(model)
-		channels, _ = filterCandidateIDs(group2model2channels[group][normalizedModel], model, filters)
+		normalizedModel := ratio_setting.RoutingMatchModelName(modelName)
+		channels, _ = filterCandidateIDs(group2model2channels[group][normalizedModel], modelName, filters)
 	}
 
 	if len(channels) == 0 {
 		return nil, nil
-	}
-
-	if len(channels) == 1 {
-		if channel, ok := channelsIDM[channels[0]]; ok {
-			return channel, nil
-		}
-		return nil, fmt.Errorf("database consistency error: channel #%d does not exist, please contact the administrator", channels[0])
 	}
 
 	uniquePriorities := make(map[int]bool)
@@ -167,22 +162,45 @@ func GetRandomSatisfiedChannel(
 	}
 	targetPriority := int64(sortedUniquePriorities[retry])
 
-	// get the priority for the given retry number
-	var sumWeight = 0
 	var targetChannels []*Channel
 	for _, channelId := range channels {
 		if channel, ok := channelsIDM[channelId]; ok {
 			if channel.GetPriority() == targetPriority {
-				sumWeight += channel.GetWeight()
 				targetChannels = append(targetChannels, channel)
 			}
 		} else {
 			return nil, fmt.Errorf("database consistency error: channel #%d does not exist, please contact the administrator", channelId)
 		}
 	}
+	return targetChannels, nil
+}
 
+func GetRandomSatisfiedChannel(
+	group string,
+	model string,
+	retry int,
+	filters []dto.ChannelFilter,
+) (*Channel, error) {
+	// if memory cache is disabled, get channel directly from database
+	if !common.MemoryCacheEnabled {
+		return GetChannel(group, model, retry, filters)
+	}
+
+	channelSyncLock.RLock()
+	defer channelSyncLock.RUnlock()
+
+	targetChannels, err := priorityTierCandidatesLocked(group, model, retry, filters)
+	if err != nil {
+		return nil, err
+	}
 	if len(targetChannels) == 0 {
-		return nil, errors.New(fmt.Sprintf("no channel found, group: %s, model: %s, priority: %d", group, model, targetPriority))
+		return nil, nil
+	}
+
+	// get the priority for the given retry number
+	var sumWeight = 0
+	for _, channel := range targetChannels {
+		sumWeight += channel.GetWeight()
 	}
 
 	// smoothing factor and adjustment

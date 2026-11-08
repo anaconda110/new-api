@@ -38,6 +38,8 @@ import type {
   GetChannelsResponse,
   MultiKeyManageParams,
   MultiKeyStatusResponse,
+  PoolCollectResponse,
+  PoolStatusResponse,
   SearchChannelsParams,
   SearchChannelsResponse,
   TagOperationParams,
@@ -539,6 +541,32 @@ export async function deleteDisabledMultiKeys(
     channel_id: channelId,
     action: 'delete_disabled_keys',
   }) as Promise<{ success: boolean; message?: string; data?: number }>
+}
+
+// ============================================================================
+// Pool Scheduling
+// ============================================================================
+
+/**
+ * Get the live member status of every configured pool
+ */
+export async function getPoolStatus(): Promise<PoolStatusResponse> {
+  const res = await api.get('/api/channel/pool', {
+    disableDuplicate: true,
+  })
+  return res.data
+}
+
+/**
+ * Trigger one pool quota collection pass immediately
+ */
+export async function collectPoolQuota(): Promise<PoolCollectResponse> {
+  const res = await api.post(
+    '/api/channel/pool/collect',
+    null,
+    channelActionConfig()
+  )
+  return res.data
 }
 
 // ============================================================================
