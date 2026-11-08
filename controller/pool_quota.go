@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/pool_setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 )
 
@@ -157,6 +158,48 @@ func GetPoolStatus(c *gin.Context) {
 		pools = append(pools, status)
 	}
 	common.ApiSuccess(c, map[string]any{"pools": pools})
+}
+
+// PoolWhy explains why a (group, model) request would or would not be served
+// by each pool member right now.
+func PoolWhy(c *gin.Context) {
+	group := c.Query("group")
+	if group == "" {
+		group = "default"
+	}
+	modelName := c.Query("model")
+	if modelName == "" {
+		common.ApiError(c, errors.New("model query parameter is required"))
+		return
+	}
+	used := make(map[int]bool)
+	for _, id := range c.QueryArray("used") {
+		if v, err := strconv.Atoi(id); err == nil {
+			used[v] = true
+		}
+	}
+	diagnoses := service.DiagnosePoolMembers(group, modelName, used)
+	_, poolOk := pool_setting.GetPoolByTag("")
+	tier, tierErr := model.GetPriorityTierCandidates(group, modelName, 0, nil)
+	tierIds := make([]int, 0, len(tier))
+	for _, ch := range tier {
+		tierIds = append(tierIds, ch.Id)
+	}
+	common.ApiSuccess(c, gin.H{
+		"group":         group,
+		"model":         modelName,
+		"pool_matching": poolOk,
+		"tier":          tierIds,
+		"tier_error":    fmt.Sprintf("%v", tierErr),
+		"price_known": func() bool {
+			_, ok, _ := ratio_setting.GetModelRatio(modelName)
+			if !ok {
+				_, ok = ratio_setting.GetModelPrice(modelName, false)
+			}
+			return ok
+		}(),
+		"members": diagnoses,
+	})
 }
 
 // TriggerPoolQuotaCollection runs one collection pass immediately.

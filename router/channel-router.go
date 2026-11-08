@@ -97,6 +97,7 @@ var channelPermissionRoutes = []permissionRoute{
 	{method: http.MethodPost, path: "/multi_key/manage", permission: authz.ChannelOperate, handler: controller.ManageMultiKeys},
 	{method: http.MethodGet, path: "/pool", permission: authz.ChannelRead, handler: controller.GetPoolStatus},
 	{method: http.MethodPost, path: "/pool/collect", permission: authz.ChannelOperate, handler: controller.TriggerPoolQuotaCollection},
+	{method: http.MethodGet, path: "/pool/why", permission: authz.ChannelRead, handler: controller.PoolWhy},
 	{method: http.MethodPut, path: "/:id/console_credential", permission: authz.ChannelSensitiveWrite, handler: controller.SaveChannelConsoleCredential},
 	{method: http.MethodGet, path: "/:id/console_credential", permission: authz.ChannelRead, handler: controller.GetChannelConsoleCredential},
 	{method: http.MethodDelete, path: "/:id/console_credential", permission: authz.ChannelSensitiveWrite, handler: controller.DeleteChannelConsoleCredential},

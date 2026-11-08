@@ -1,6 +1,7 @@
 package service
 
 import (
+	"fmt"
 	"math/rand"
 	"sort"
 	"strconv"
@@ -157,6 +158,104 @@ func memberDrainedUntil(candidate poolCandidate, now time.Time) (bool, time.Time
 		return false, time.Time{}
 	}
 	return true, soonest
+}
+
+// PoolMemberDiagnosis explains one member's scheduling state for the
+// why-not-served diagnostic.
+type PoolMemberDiagnosis struct {
+	Member     string   `json:"member"`
+	ChannelId  int      `json:"channel_id"`
+	ChannelTag string   `json:"channel_tag"`
+	InTier     bool     `json:"in_tier"`
+	Resting    bool     `json:"resting"`
+	RestReason string   `json:"rest_reason,omitempty"`
+	RestUntil  string   `json:"rest_until,omitempty"`
+	Inflight   int      `json:"inflight"`
+	Saturated  bool     `json:"saturated,omitempty"`
+	Drained    bool     `json:"drained,omitempty"`
+	UsedBefore bool     `json:"used_before,omitempty"`
+	Windows    int      `json:"windows"`
+	Reasons    []string `json:"reasons"`
+}
+
+// DiagnosePoolMembers explains why each member of a pool would or would not
+// serve a (group, model) request right now.
+func DiagnosePoolMembers(group string, modelName string, usedChannelIds map[int]bool) []PoolMemberDiagnosis {
+	setting := pool_setting.GetPoolSetting()
+	diagnoses := make([]PoolMemberDiagnosis, 0)
+	if !setting.Enabled {
+		return diagnoses
+	}
+	tier, tierErr := model.GetPriorityTierCandidates(group, modelName, 0, nil)
+	tierIds := make(map[int]bool)
+	for _, ch := range tier {
+		tierIds[ch.Id] = true
+	}
+	if tierErr != nil {
+		tier = nil
+	}
+	for _, pool := range setting.Pools {
+		channels, err := model.GetChannelsByTag(pool.Tag, false, true)
+		if err != nil {
+			continue
+		}
+		rt := poolRuntimeFor(pool.Tag)
+		now := time.Now()
+		for _, channel := range channels {
+			tag := channel.GetTag()
+			for _, member := range ExpandPoolMembers(channel) {
+				d := PoolMemberDiagnosis{
+					Member:     member.String(),
+					ChannelId:  channel.Id,
+					ChannelTag: tag,
+					InTier:     tierIds[channel.Id],
+					Reasons:    []string{},
+				}
+				state := rt.memberRuntimeOf(member)
+				d.Resting = state.restingUntil.After(now)
+				d.Inflight = state.inflight
+				d.Saturated = pool.MaxConcurrency > 0 && state.inflight >= pool.MaxConcurrency
+				d.Windows = len(state.windows)
+				if d.Resting {
+					d.RestUntil = state.restingUntil.Format(time.RFC3339)
+				}
+				candidate := poolCandidate{Member: member, Channel: channel,
+					Windows: state.windows, Penalty: state.penalty, UsedReqs: state.usedRequests}
+				if drained, until := memberDrainedUntil(candidate, now); drained {
+					d.Drained = true
+					d.RestReason = "quota_drained"
+					d.RestUntil = until.Format(time.RFC3339)
+				} else if d.Resting {
+					d.RestReason = "rate_limited"
+				}
+				if usedChannelIds[channel.Id] {
+					d.UsedBefore = true
+				}
+				if !d.InTier {
+					d.Reasons = append(d.Reasons, "channel is not in the (group, model) candidate tier")
+				}
+				if channel.Status != common.ChannelStatusEnabled {
+					d.Reasons = append(d.Reasons, fmt.Sprintf("channel status %d (not enabled)", channel.Status))
+				}
+				if d.Drained {
+					d.Reasons = append(d.Reasons, "every known quota window is drained until the next reset")
+				} else if d.Resting && d.RestReason == "rate_limited" {
+					d.Reasons = append(d.Reasons, "resting after an upstream rate limit")
+				}
+				if d.Saturated {
+					d.Reasons = append(d.Reasons, fmt.Sprintf("in-flight %d reached max_concurrency %d", d.Inflight, pool.MaxConcurrency))
+				}
+				if d.UsedBefore {
+					d.Reasons = append(d.Reasons, "already tried in this request's retry trail")
+				}
+				if len(d.Reasons) == 0 {
+					d.Reasons = append(d.Reasons, "eligible")
+				}
+				diagnoses = append(diagnoses, d)
+			}
+		}
+	}
+	return diagnoses
 }
 
 // nearestRestMs returns the milliseconds until the earliest resting member
