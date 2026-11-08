@@ -35,23 +35,34 @@ const (
 	sensenovaJitterMs      = 5000
 )
 
+const sensenovaLoginIntervalMs = 300000 // the platform throttles logins much harder than reads
+
 var (
 	consoleGateMu      sync.Mutex
 	consoleNextAllowed time.Time
+	consoleLoginNext   time.Time
 )
 
 // throttleConsole spaces console requests out per source IP. Blocks until the
-// slot opens, then reserves it.
-func throttleConsole() {
+// slot opens, then reserves it. Password logins get their own, much wider
+// gate: the platform rejects rapid consecutive logins outright.
+func throttleConsole(minIntervalMs int, login bool) {
 	consoleGateMu.Lock()
 	defer consoleGateMu.Unlock()
 	now := time.Now()
-	if consoleNextAllowed.After(now) {
-		time.Sleep(consoleNextAllowed.Sub(now))
+	next := consoleNextAllowed
+	if login && consoleLoginNext.After(next) {
+		next = consoleLoginNext
+	}
+	if next.After(now) {
+		time.Sleep(next.Sub(now))
 		now = time.Now()
 	}
 	jitter := time.Duration(common.GetRandomInt(sensenovaJitterMs)) * time.Millisecond
-	consoleNextAllowed = now.Add(time.Duration(sensenovaMinIntervalMs)*time.Millisecond + jitter)
+	consoleNextAllowed = now.Add(time.Duration(minIntervalMs)*time.Millisecond + jitter)
+	if login {
+		consoleLoginNext = now.Add(time.Duration(sensenovaLoginIntervalMs)*time.Millisecond + jitter)
+	}
 }
 
 // sensenovaConsoleClient returns a client that stops at each redirect so the
@@ -67,7 +78,7 @@ func sensenovaConsoleClient(jar *cookiejar.Jar) *http.Client {
 }
 
 func sensenovaDo(client *http.Client, req *http.Request) (*http.Response, []byte, error) {
-	throttleConsole()
+	throttleConsole(sensenovaMinIntervalMs, false)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, nil, err
@@ -97,7 +108,7 @@ func sensenovaTokenExpiry(accessToken string, expiresIn int64) int64 {
 
 // sensenovaRefresh exchanges a refresh_token for a new token set.
 func sensenovaRefresh(refreshToken string) (access string, refresh string, expiresAt int64, err error) {
-	throttleConsole()
+	throttleConsole(sensenovaMinIntervalMs, false)
 	form := url.Values{
 		"grant_type":    {"refresh_token"},
 		"client_id":     {sensenovaClientID},
@@ -128,7 +139,7 @@ func sensenovaRefresh(refreshToken string) (access string, refresh string, expir
 }
 
 func sensenovaDoRaw(client *http.Client, req *http.Request) (*http.Response, []byte, error) {
-	throttleConsole()
+	throttleConsole(sensenovaMinIntervalMs, false)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, nil, err
@@ -186,6 +197,7 @@ func sensenovaPasswordLogin(username string, password string) (access string, re
 		return data.AccessToken, data.RefreshToken, sensenovaTokenExpiry(data.AccessToken, data.ExpiresIn), nil
 	}
 
+	throttleConsole(sensenovaMinIntervalMs, true)
 	codeOf := func(location string) string {
 		if u, parseErr := url.Parse(location); parseErr == nil {
 			if code := u.Query().Get("code"); code != "" {
