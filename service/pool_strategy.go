@@ -133,6 +133,32 @@ func selectPoolMember(pool pool_setting.PoolConfig, tier []*model.Channel, used 
 	return selected.Channel, selected.Member.KeyIndex
 }
 
+// memberDrainedUntil reports whether every known window of a member is fully
+// drained (remaining <= 0) and returns the soonest reset time that would
+// restore any of them. Members without windows are never considered drained.
+func memberDrainedUntil(candidate poolCandidate, now time.Time) (bool, time.Time) {
+	if len(candidate.Windows) == 0 {
+		return false, time.Time{}
+	}
+	known := 0
+	var soonest time.Time
+	for _, window := range candidate.Windows {
+		if window.Remaining > 0 {
+			return false, time.Time{}
+		}
+		if window.Capacity > 0 && !window.ExpiryAt.IsZero() && window.ExpiryAt.After(now) {
+			known++
+			if soonest.IsZero() || window.ExpiryAt.Before(soonest) {
+				soonest = window.ExpiryAt
+			}
+		}
+	}
+	if known == 0 {
+		return false, time.Time{}
+	}
+	return true, soonest
+}
+
 // nearestRestMs returns the milliseconds until the earliest resting member
 // frees up, or 0 when nothing rests.
 func nearestRestMs(pool pool_setting.PoolConfig, tier []*model.Channel) int64 {
@@ -218,6 +244,13 @@ func filterAvailableMembersCapped(pool pool_setting.PoolConfig, candidates []poo
 			continue
 		}
 		if maxConcurrency > 0 && rt.inflightOf(candidate.Member) >= maxConcurrency {
+			continue
+		}
+		// Quota-exhausted members rest until their window resets: a drained
+		// window with a known reset time cannot serve until then, and the
+		// reset restores it automatically (quotaAutoReset parity).
+		if drained, until := memberDrainedUntil(candidate, now); drained {
+			rt.markRestingUntil(candidate.Member, until, false)
 			continue
 		}
 		available = append(available, candidate)

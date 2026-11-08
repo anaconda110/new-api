@@ -123,6 +123,18 @@ func (p *poolRuntime) markResting(id MemberId, base time.Duration, until time.Ti
 	}
 }
 
+// markRestingUntil rests a member until a fixed time (quota window reset)
+// without touching the failure counter.
+func (p *poolRuntime) markRestingUntil(id MemberId, until time.Time, moveLast bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	m := p.member(id)
+	m.restingUntil = until
+	if moveLast {
+		m.penalty++
+	}
+}
+
 func (p *poolRuntime) restingUntil(id MemberId) time.Time {
 	p.mu.Lock()
 	defer p.mu.Unlock()
