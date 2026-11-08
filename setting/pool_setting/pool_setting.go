@@ -55,11 +55,20 @@ type MemberAnnotation struct {
 }
 
 type PoolConfig struct {
-	Tag                  string                      `json:"tag"`
-	Strategy             string                      `json:"strategy"`
-	RateLimitPolicy      string                      `json:"rate_limit_policy"`
-	RateLimitRestSeconds int                         `json:"rate_limit_rest_seconds"`
-	MemberAnnotations    map[string]MemberAnnotation `json:"member_annotations,omitempty"`
+	Tag                  string `json:"tag"`
+	Strategy             string `json:"strategy"`
+	RateLimitPolicy      string `json:"rate_limit_policy"`
+	RateLimitRestSeconds int    `json:"rate_limit_rest_seconds"`
+	// RateLimitBackoff doubles the rest duration on repeated failures
+	// (base capped at 8x), matching the upstream cooldown escalation.
+	RateLimitBackoff bool `json:"rate_limit_backoff,omitempty"`
+	// ExhaustedWaitMs waits this long for a resting member to free up when
+	// every pool member is rate-limited, before falling back (0 = no wait).
+	ExhaustedWaitMs int `json:"exhausted_wait_ms,omitempty"`
+	// MaxConcurrency caps concurrent in-flight requests per member (0 = off).
+	MaxConcurrency int `json:"max_concurrency,omitempty"`
+
+	MemberAnnotations map[string]MemberAnnotation `json:"member_annotations,omitempty"`
 }
 
 type PoolSetting struct {

@@ -49,10 +49,31 @@ func trySelectPoolChannel(c *gin.Context, group string, modelName string, priori
 		return nil
 	}
 	channel, keyIndex := selectPoolMember(pool, tier, usedChannelIds(c))
+	if channel == nil && pool.ExhaustedWaitMs > 0 {
+		// Every member is resting: wait briefly for the nearest cooldown to
+		// expire (upstream waits ~2s in this situation) before giving the
+		// legacy path a chance. The wait is bounded by the nearest rest.
+		waitMs := pool.ExhaustedWaitMs
+		if nearest := nearestRestMs(pool, tier); nearest > 0 && nearest < int64(waitMs) {
+			waitMs = int(nearest)
+		}
+		logger.LogWarn(c, common.LogText("pool %s exhausted, waiting %dms for a member to free up", pool.Tag, waitMs))
+		select {
+		case <-time.After(time.Duration(waitMs) * time.Millisecond):
+		case <-c.Request.Context().Done():
+			return nil
+		}
+		releasePoolInflight(c)
+		channel, keyIndex = selectPoolMember(pool, tier, usedChannelIds(c))
+	}
 	if channel == nil {
 		logger.LogWarn(c, common.LogText("pool %s has no available member, falling back to weighted random", pool.Tag))
 		return nil
 	}
+	releasePoolInflight(c)
+	selected := MemberId{ChannelId: channel.Id, KeyIndex: keyIndex}
+	poolRuntimeFor(pool.Tag).acquireInflight(selected)
+	c.Set(poolInflightContextKey, selected)
 	if keyIndex >= 0 {
 		common.SetContextKey(c, constant.ContextKeyPoolSelectedKeyIndex, keyIndex)
 	}
@@ -97,7 +118,7 @@ func usedChannelIds(c *gin.Context) map[int]bool {
 // (-1 for single-key channels).
 func selectPoolMember(pool pool_setting.PoolConfig, tier []*model.Channel, used map[int]bool) (*model.Channel, int) {
 	candidates := buildPoolCandidates(pool, tier)
-	available := filterAvailableMembers(pool, candidates, used)
+	available := filterAvailableMembersCapped(pool, candidates, used, pool.MaxConcurrency)
 	if len(available) == 0 {
 		return nil, -1
 	}
@@ -110,6 +131,23 @@ func selectPoolMember(pool pool_setting.PoolConfig, tier []*model.Channel, used 
 		return nil, -1
 	}
 	return selected.Channel, selected.Member.KeyIndex
+}
+
+// nearestRestMs returns the milliseconds until the earliest resting member
+// frees up, or 0 when nothing rests.
+func nearestRestMs(pool pool_setting.PoolConfig, tier []*model.Channel) int64 {
+	rt := poolRuntimeFor(pool.Tag)
+	now := time.Now()
+	var nearest int64 = -1
+	for _, channel := range tier {
+		for _, member := range ExpandPoolMembers(channel) {
+			d := rt.restingUntil(member).Sub(now).Milliseconds()
+			if d > 0 && (nearest < 0 || d < nearest) {
+				nearest = d
+			}
+		}
+	}
+	return nearest
 }
 
 func buildPoolCandidates(pool pool_setting.PoolConfig, tier []*model.Channel) []poolCandidate {
@@ -165,6 +203,10 @@ func manualWindowsToSnapshots(manual []pool_setting.ManualWindow) []WindowSnapsh
 // already tried in this request. Resting members only drop out while at least
 // one healthy member remains, mirroring the model-level exclusion fallback.
 func filterAvailableMembers(pool pool_setting.PoolConfig, candidates []poolCandidate, used map[int]bool) []poolCandidate {
+	return filterAvailableMembersCapped(pool, candidates, used, pool.MaxConcurrency)
+}
+
+func filterAvailableMembersCapped(pool pool_setting.PoolConfig, candidates []poolCandidate, used map[int]bool, maxConcurrency int) []poolCandidate {
 	available := make([]poolCandidate, 0, len(candidates))
 	now := time.Now()
 	rt := poolRuntimeFor(pool.Tag)
@@ -173,6 +215,9 @@ func filterAvailableMembers(pool pool_setting.PoolConfig, candidates []poolCandi
 			continue
 		}
 		if rt.restingUntil(candidate.Member).After(now) {
+			continue
+		}
+		if maxConcurrency > 0 && rt.inflightOf(candidate.Member) >= maxConcurrency {
 			continue
 		}
 		available = append(available, candidate)

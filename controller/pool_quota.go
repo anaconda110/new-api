@@ -76,6 +76,8 @@ type poolMemberStatus struct {
 	ChannelState int                           `json:"channel_status"`
 	Collector    bool                          `json:"collector"`
 	Penalty      int                           `json:"penalty"`
+	Failures     int                           `json:"failures"`
+	Inflight     int                           `json:"inflight"`
 	RestingUntil *time.Time                    `json:"resting_until,omitempty"`
 	LatencyMs    float64                       `json:"latency_ms"`
 	UsedRequests int64                         `json:"used_requests"`
@@ -127,6 +129,8 @@ func GetPoolStatus(c *gin.Context) {
 					ChannelState: channel.Status,
 					Collector:    service.HasQuotaCollector(channel.Type),
 					Penalty:      state.Penalty,
+					Failures:     state.Failures,
+					Inflight:     state.Inflight,
 					LatencyMs:    state.LatencyMs,
 					UsedRequests: state.UsedRequests,
 					QuotaUnknown: state.QuotaUnknown,

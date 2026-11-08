@@ -9,6 +9,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/setting/pool_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -101,7 +102,7 @@ func TestPoolExhaustThenSwitchSticksUntilRest(t *testing.T) {
 	// Once the sticky member rests the strategy moves on and re-sticks. The
 	// strategies receive pre-filtered candidates from selectPoolMember, so the
 	// test applies the same filter after marking the rest.
-	poolRuntimeFor(tag).markResting(MemberId{ChannelId: 1, KeyIndex: -1}, time.Now().Add(time.Minute), false)
+	poolRuntimeFor(tag).markResting(MemberId{ChannelId: 1, KeyIndex: -1}, time.Minute, time.Now(), false, false)
 	available := filterAvailableMembers(pool_setting.PoolConfig{Tag: tag}, candidates, nil)
 	require.Len(t, available, 1)
 	third := selectExhaustThenSwitch(pool_setting.PoolConfig{Tag: tag}, available, nil)
@@ -244,30 +245,30 @@ func TestPoolFilterSkipsUsedAndResting(t *testing.T) {
 	assert.Equal(t, 2, available[0].Member.ChannelId)
 
 	// Resting members drop out of the candidate set.
-	poolRuntimeFor(tag).markResting(MemberId{ChannelId: 2, KeyIndex: -1}, time.Now().Add(time.Minute), false)
+	poolRuntimeFor(tag).markResting(MemberId{ChannelId: 2, KeyIndex: -1}, time.Minute, time.Now(), false, false)
 	available = filterAvailableMembers(pool_setting.PoolConfig{Tag: tag}, candidates, map[int]bool{1: true})
 	require.Len(t, available, 1)
 	assert.Equal(t, 3, available[0].Member.ChannelId)
 
 	// With nothing left the filter returns nil and selection falls back.
-	poolRuntimeFor(tag).markResting(MemberId{ChannelId: 3, KeyIndex: -1}, time.Now().Add(time.Minute), false)
+	poolRuntimeFor(tag).markResting(MemberId{ChannelId: 3, KeyIndex: -1}, time.Minute, time.Now(), false, false)
 	assert.Nil(t, filterAvailableMembers(pool_setting.PoolConfig{Tag: tag}, candidates, map[int]bool{1: true}))
 }
 
 func TestPoolMarkRestingPolicies(t *testing.T) {
 	tag := "pool-test-policy"
-	poolRuntimeFor(tag).markResting(MemberId{ChannelId: 1, KeyIndex: -1}, time.Now().Add(time.Minute), false)
+	poolRuntimeFor(tag).markResting(MemberId{ChannelId: 1, KeyIndex: -1}, time.Minute, time.Now(), false, false)
 	state := poolRuntimeFor(tag).memberRuntimeOf(MemberId{ChannelId: 1, KeyIndex: -1})
 	assert.Zero(t, state.penalty, "keep policy must not penalize")
 	assert.True(t, state.restingUntil.After(time.Now()))
 
-	poolRuntimeFor(tag).markResting(MemberId{ChannelId: 2, KeyIndex: -1}, time.Now().Add(time.Minute), true)
+	poolRuntimeFor(tag).markResting(MemberId{ChannelId: 2, KeyIndex: -1}, time.Minute, time.Now(), true, false)
 	state = poolRuntimeFor(tag).memberRuntimeOf(MemberId{ChannelId: 2, KeyIndex: -1})
 	assert.Equal(t, 1, state.penalty, "move_last policy must penalize")
 
 	// Clearing the sticky member when it rests keeps exhaust-then-switch sane.
 	poolRuntimeFor(tag).setSticky(MemberId{ChannelId: 2, KeyIndex: -1})
-	poolRuntimeFor(tag).markResting(MemberId{ChannelId: 2, KeyIndex: -1}, time.Now().Add(time.Minute), false)
+	poolRuntimeFor(tag).markResting(MemberId{ChannelId: 2, KeyIndex: -1}, time.Minute, time.Now(), false, false)
 	_, stickySet := poolRuntimeFor(tag).stickyMember()
 	assert.False(t, stickySet)
 }
@@ -329,14 +330,14 @@ func TestSelectChannelKeyForRequestSkipsRestingKeys(t *testing.T) {
 	setupPoolSetting(t, pool_setting.PoolConfig{Tag: tag, Strategy: pool_setting.StrategyOrdered})
 	channel := poolTestChannel(10, tag, 0, []string{"k0", "k1"}, nil)
 
-	poolRuntimeFor(tag).markResting(MemberId{ChannelId: 10, KeyIndex: 0}, time.Now().Add(time.Minute), false)
+	poolRuntimeFor(tag).markResting(MemberId{ChannelId: 10, KeyIndex: 0}, time.Minute, time.Now(), false, false)
 	key, index, err := SelectChannelKeyForRequest(poolTestContext(), channel)
 	require.Nil(t, err)
 	assert.Equal(t, "k1", key)
 	assert.Equal(t, 1, index)
 
 	// When every key rests the exclusion is ignored instead of failing closed.
-	poolRuntimeFor(tag).markResting(MemberId{ChannelId: 10, KeyIndex: 1}, time.Now().Add(time.Minute), false)
+	poolRuntimeFor(tag).markResting(MemberId{ChannelId: 10, KeyIndex: 1}, time.Minute, time.Now(), false, false)
 	key, index, err = SelectChannelKeyForRequest(poolTestContext(), channel)
 	require.Nil(t, err)
 	assert.Contains(t, []string{"k0", "k1"}, key)
@@ -348,9 +349,9 @@ func TestPoolChannelUnavailableRequiresAllMembersResting(t *testing.T) {
 	channel := poolTestChannel(11, tag, 0, []string{"k0", "k1"}, nil)
 
 	assert.False(t, PoolChannelUnavailable(channel))
-	poolRuntimeFor(tag).markResting(MemberId{ChannelId: 11, KeyIndex: 0}, time.Now().Add(time.Minute), false)
+	poolRuntimeFor(tag).markResting(MemberId{ChannelId: 11, KeyIndex: 0}, time.Minute, time.Now(), false, false)
 	assert.False(t, PoolChannelUnavailable(channel))
-	poolRuntimeFor(tag).markResting(MemberId{ChannelId: 11, KeyIndex: 1}, time.Now().Add(time.Minute), false)
+	poolRuntimeFor(tag).markResting(MemberId{ChannelId: 11, KeyIndex: 1}, time.Minute, time.Now(), false, false)
 	assert.True(t, PoolChannelUnavailable(channel))
 }
 
@@ -362,4 +363,97 @@ func TestPoolMemberString(t *testing.T) {
 func poolTestContext() *gin.Context {
 	c, _ := gin.CreateTestContext(nil)
 	return c
+}
+
+func TestPoolRateLimitBackoffEscalates(t *testing.T) {
+	tag := "pool-test-backoff"
+	rt := poolRuntimeFor(tag)
+	member := MemberId{ChannelId: 1, KeyIndex: -1}
+
+	rt.markResting(member, 60*time.Second, time.Now(), false, true)
+	state := rt.memberRuntimeOf(member)
+	require.Equal(t, 1, state.failures)
+	rest1 := time.Until(state.restingUntil)
+	assert.Greater(t, rest1, 55*time.Second)
+	assert.Less(t, rest1, 65*time.Second)
+
+	// Second failure doubles the cooldown; success resets the counter.
+	rt.markResting(member, 60*time.Second, time.Now(), false, true)
+	rest2 := time.Until(rt.memberRuntimeOf(member).restingUntil)
+	assert.Greater(t, rest2, 115*time.Second)
+	assert.Less(t, rest2, 125*time.Second)
+
+	rt.observeSuccess(member, 10)
+	state = rt.memberRuntimeOf(member)
+	assert.Zero(t, state.failures)
+
+	// Escalation is capped at 8x the base.
+	for i := 0; i < 6; i++ {
+		rt.markResting(member, 60*time.Second, time.Now(), false, true)
+	}
+	rest8 := time.Until(rt.memberRuntimeOf(member).restingUntil)
+	assert.Less(t, rest8, 8*60*time.Second+5*time.Second)
+	assert.Greater(t, rest8, 8*60*time.Second-5*time.Second)
+}
+
+func TestPoolExhaustedWaitFreesRestingMember(t *testing.T) {
+	tag := "pool-test-wait"
+	setupPoolSetting(t, pool_setting.PoolConfig{
+		Tag: tag, Strategy: pool_setting.StrategyOrdered,
+		ExhaustedWaitMs: 300,
+	})
+	candidates := []poolCandidate{poolCand(1, -1), poolCand(2, -1)}
+
+	// Member 1 rests briefly (within the bounded wait), member 2 longer.
+	poolRuntimeFor(tag).markResting(candidates[0].Member, 50*time.Millisecond, time.Now(), false, false)
+	poolRuntimeFor(tag).markResting(candidates[1].Member, 400*time.Millisecond, time.Now(), false, false)
+	assert.Nil(t, filterAvailableMembers(pool_setting.PoolConfig{Tag: tag}, candidates, nil))
+
+	time.Sleep(150 * time.Millisecond)
+	available := filterAvailableMembers(pool_setting.PoolConfig{Tag: tag}, candidates, nil)
+	require.Len(t, available, 1)
+	assert.Equal(t, 1, available[0].Member.ChannelId)
+	// The nearest rest stays inside the exhausted-wait budget.
+	nearest := nearestRestMs(pool_setting.PoolConfig{Tag: tag}, [](*model.Channel){poolTestChannel(2, tag, 0, []string{"k"}, nil)})
+	assert.Greater(t, nearest, int64(0))
+	assert.LessOrEqual(t, nearest, int64(300))
+}
+
+func TestPoolConcurrencyCapSkipsSaturated(t *testing.T) {
+	tag := "pool-test-conc"
+	pool := pool_setting.PoolConfig{Tag: tag, Strategy: pool_setting.StrategyOrdered, MaxConcurrency: 1}
+	rt := poolRuntimeFor(tag)
+	candidates := []poolCandidate{poolCand(1, -1), poolCand(2, -1)}
+
+	// Member 1 is saturated: member 2 is picked despite losing the order race.
+	rt.acquireInflight(MemberId{ChannelId: 1, KeyIndex: -1})
+	channel, keyIndex := selectPoolMember(pool, [](*model.Channel){
+		poolTestChannel(1, tag, 0, []string{"k"}, nil),
+		poolTestChannel(2, tag, 0, []string{"k"}, nil),
+	}, nil)
+	require.NotNil(t, channel)
+	assert.Equal(t, 2, channel.Id)
+	assert.Equal(t, -1, keyIndex)
+
+	// Both saturated -> nothing available.
+	rt.acquireInflight(MemberId{ChannelId: 2, KeyIndex: -1})
+	assert.Nil(t, filterAvailableMembersCapped(pool, candidates, nil, 1))
+	rt.releaseInflight(MemberId{ChannelId: 2, KeyIndex: -1})
+	assert.Len(t, filterAvailableMembersCapped(pool, candidates, nil, 1), 1)
+	rt.releaseInflight(MemberId{ChannelId: 1, KeyIndex: -1})
+}
+
+func TestPoolStrictRotateOn429(t *testing.T) {
+	c, _ := gin.CreateTestContext(nil)
+	c.Set(ginKeyChannelAffinitySkipRetry, true)
+	c.Set(string(constant.ContextKeyPoolSelection), map[string]any{"tag": "t"})
+
+	// Rate limit + pool served: rotate inside the pool instead of stopping.
+	decision := DecideRelayRetry(c, types.NewErrorWithStatusCode(assert.AnError, types.ErrorCodeDoRequestFailed, 429), 3)
+	assert.Equal(t, "retry", decision.Action)
+	assert.Equal(t, "strict_pool_rate_rotate", decision.Reason)
+
+	// Non-rate failures still stop.
+	decision = DecideRelayRetry(c, types.NewError(assert.AnError, types.ErrorCodeChannelNoAvailableKey), 3)
+	assert.Equal(t, "stop", decision.Action)
 }

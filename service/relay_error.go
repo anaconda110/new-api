@@ -23,6 +23,12 @@ func DecideRelayRetry(c *gin.Context, err *types.NewAPIError, retryTimes int) Po
 		return PolicyDecision{Action: "stop", Reason: "request_completed", Source: "system"}
 	}
 	if ShouldSkipRetryAfterChannelAffinityFailure(c) {
+		// Strict sessions pin the pool, not one account (Magpie parity): an
+		// upstream rate limit rotates to another pool member instead of
+		// erroring straight to the client. Non-rate failures still stop.
+		if err.StatusCode == http.StatusTooManyRequests && retryTimes > 0 && PoolServedAttempt(c) {
+			return PolicyDecision{Action: "retry", Reason: "strict_pool_rate_rotate", Source: "session_rule"}
+		}
 		source := RequestPolicy(c).SessionModeSource
 		if source == "" {
 			source = "session_rule"

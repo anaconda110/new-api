@@ -46,6 +46,8 @@ type WindowSnapshot struct {
 type memberRuntime struct {
 	restingUntil time.Time
 	penalty      int
+	failures     int
+	inflight     int
 	latencyMs    float64
 	latencyN     int64
 	usedRequests int64
@@ -97,12 +99,22 @@ func (p *poolRuntime) member(id MemberId) *memberRuntime {
 }
 
 // markResting puts a member to rest until the given time and applies the
-// pool's rate-limit policy.
-func (p *poolRuntime) markResting(id MemberId, until time.Time, moveLast bool) {
+// pool's rate-limit policy. backoff escalates the duration on repeated
+// failures: base << min(failures-1, 3), capped at 8x.
+func (p *poolRuntime) markResting(id MemberId, base time.Duration, until time.Time, moveLast bool, backoff bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	m := p.member(id)
-	m.restingUntil = until
+	m.failures++
+	rest := base
+	if backoff && m.failures > 1 {
+		shift := m.failures - 1
+		if shift > 3 {
+			shift = 3
+		}
+		rest = base << shift
+	}
+	m.restingUntil = time.Now().Add(rest)
 	if moveLast {
 		m.penalty++
 	}
@@ -126,7 +138,33 @@ func (p *poolRuntime) bumpPenalty(id MemberId) {
 func (p *poolRuntime) observeSuccess(id MemberId, latencyMs int64) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.member(id).observeSuccess(latencyMs)
+	m := p.member(id)
+	m.observeSuccess(latencyMs)
+	m.failures = 0
+}
+
+// acquireInflight bumps a member's in-flight counter and reports the new
+// value; releaseInflight drops it. Both are request-lifecycle scoped.
+func (p *poolRuntime) acquireInflight(id MemberId) int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	m := p.member(id)
+	m.inflight++
+	return m.inflight
+}
+
+func (p *poolRuntime) releaseInflight(id MemberId) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if m, ok := p.members[id.String()]; ok && m.inflight > 0 {
+		m.inflight--
+	}
+}
+
+func (p *poolRuntime) inflightOf(id MemberId) int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.member(id).inflight
 }
 
 func (p *poolRuntime) setWindows(id MemberId, windows []WindowSnapshot, quotaUnknown bool) {
@@ -160,6 +198,8 @@ func (p *poolRuntime) memberStates() map[string]memberRuntime {
 type MemberRuntimeStatus struct {
 	RestingUntil time.Time        `json:"resting_until"`
 	Penalty      int              `json:"penalty"`
+	Failures     int              `json:"failures"`
+	Inflight     int              `json:"inflight"`
 	LatencyMs    float64          `json:"latency_ms"`
 	UsedRequests int64            `json:"used_requests"`
 	Windows      []WindowSnapshot `json:"windows"`
@@ -174,6 +214,8 @@ func (p *poolRuntime) memberStatuses() map[string]MemberRuntimeStatus {
 		statuses[key] = MemberRuntimeStatus{
 			RestingUntil: m.restingUntil,
 			Penalty:      m.penalty,
+			Failures:     m.failures,
+			Inflight:     m.inflight,
 			LatencyMs:    m.latencyMs,
 			UsedRequests: m.usedRequests,
 			Windows:      m.windows,
@@ -304,8 +346,10 @@ func MarkPoolRateLimited(c *gin.Context, channelId int) {
 	member := currentAttemptMember(c, channelId)
 	poolRuntimeFor(pool.Tag).markResting(
 		member,
-		time.Now().Add(time.Duration(restSeconds)*time.Second),
+		time.Duration(restSeconds)*time.Second,
+		time.Now(),
 		pool.RateLimitPolicy == pool_setting.RateLimitPolicyMoveLast,
+		pool.RateLimitBackoff,
 	)
 }
 
@@ -389,6 +433,42 @@ func SetMemberWindows(tag string, member MemberId, windows []WindowSnapshot, quo
 // the management API, keyed by member string.
 func PoolStatusSnapshot(tag string) map[string]MemberRuntimeStatus {
 	return poolRuntimeFor(tag).memberStatuses()
+}
+
+const (
+	poolInflightContextKey    = "pool_inflight_member"
+	poolInflightTagContextKey = "pool_inflight_tag"
+)
+
+// releasePoolInflight drops the in-flight slot acquired for the previous
+// attempt of this request, if any.
+func releasePoolInflight(c *gin.Context) {
+	if c == nil {
+		return
+	}
+	if value, ok := c.Get(poolInflightContextKey); ok {
+		if member, ok := value.(MemberId); ok {
+			if tag := c.GetString(poolInflightTagContextKey); tag != "" {
+				poolRuntimeFor(tag).releaseInflight(member)
+			}
+		}
+	}
+	c.Set(poolInflightContextKey, nil)
+}
+
+// PoolServedAttempt reports whether the current attempt was selected by the
+// pool strategy layer.
+func PoolServedAttempt(c *gin.Context) bool {
+	if c == nil {
+		return false
+	}
+	value, ok := common.GetContextKey(c, constant.ContextKeyPoolSelection)
+	return ok && value != nil
+}
+
+// ReleasePoolInflight releases the attempt's member slot at request end.
+func ReleasePoolInflight(c *gin.Context) {
+	releasePoolInflight(c)
 }
 
 // AppendPoolAdminInfo adds the pool scheduling decision of the current

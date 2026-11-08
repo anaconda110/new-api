@@ -370,10 +370,15 @@ func SelectChannelForRequest(c *gin.Context, modelName string, retry *RetryParam
 					MarkChannelAffinityUsed(c, usingGroup, preferred.Id)
 				}
 			}
-			if !affinityUsable && !ShouldKeepChannelAffinityOnChannelDisabled() {
+			poolResting := !affinityUsable && preferred != nil && PoolChannelUnavailable(preferred)
+			if !affinityUsable && !poolResting && !ShouldKeepChannelAffinityOnChannelDisabled() {
 				ClearCurrentChannelAffinityCache(c)
 			}
-			if !affinityUsable && RequestPolicy(c).SessionMode == "strict" {
+			// A strict session whose pool is intact but fully resting falls
+			// through to pool selection (which waits for a cooldown or falls
+			// back to the next tier) instead of erroring; the binding is kept
+			// so later requests return to the same pool.
+			if !affinityUsable && RequestPolicy(c).SessionMode == "strict" && !poolResting {
 				return nil, "", &ChannelSelectError{StatusCode: http.StatusServiceUnavailable, Message: "strict_session_binding_unavailable"}
 			}
 		}
