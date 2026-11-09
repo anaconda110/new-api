@@ -6009,6 +6009,7 @@
     "Stored configuration with effective defaults": "保存済みの設定と有効な既定値",
     "Stored value is not echoed back for security": "セキュリティのため、保存済みの値は表示されません",
     "stream": "ストリーム",
+    "Strategy": "ストラテジー",
     "Stream": "ストリーム",
     "Stream did not complete successfully": "ストリームが正常完了しませんでした",
     "Stream Mode": "ストリーミングモード",

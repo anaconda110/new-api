@@ -6009,6 +6009,7 @@
     "Stored configuration with effective defaults": "已保存的配置及生效默认值",
     "Stored value is not echoed back for security": "出于安全考虑，已存储的值不会回显",
     "stream": "流",
+    "Strategy": "策略",
     "Stream": "流",
     "Stream did not complete successfully": "流式输出未成功完成",
     "Stream Mode": "流式模式",

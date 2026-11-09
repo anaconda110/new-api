@@ -6009,6 +6009,7 @@
     "Stored configuration with effective defaults": "Cấu hình đã lưu và giá trị mặc định có hiệu lực",
     "Stored value is not echoed back for security": "Vì bảo mật, giá trị đã lưu không được hiển thị lại",
     "stream": "dòng",
+    "Strategy": "Chiến lược",
     "Stream": "Luồng",
     "Stream did not complete successfully": "Luồng không hoàn tất thành công",
     "Stream Mode": "Chế độ streaming",

@@ -6009,6 +6009,7 @@
     "Stored configuration with effective defaults": "Configuration enregistrée et valeurs effectives",
     "Stored value is not echoed back for security": "Par sécurité, la valeur enregistrée n'est pas affichée",
     "stream": "Flux",
+    "Strategy": "Stratégie",
     "Stream": "Flux",
     "Stream did not complete successfully": "Flux non terminé avec succès",
     "Stream Mode": "Mode streaming",

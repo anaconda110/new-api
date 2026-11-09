@@ -6009,6 +6009,7 @@
     "Stored configuration with effective defaults": "Сохранённые настройки и действующие значения",
     "Stored value is not echoed back for security": "В целях безопасности сохранённое значение не отображается",
     "stream": "Поток",
+    "Strategy": "Стратегия",
     "Stream": "Поток",
     "Stream did not complete successfully": "Поток не завершился успешно",
     "Stream Mode": "Потоковый режим",

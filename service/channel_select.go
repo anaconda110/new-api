@@ -371,14 +371,19 @@ func SelectChannelForRequest(c *gin.Context, modelName string, retry *RetryParam
 				}
 			}
 			poolResting := !affinityUsable && preferred != nil && PoolChannelUnavailable(preferred)
+			// Clear the binding only for a bound channel that is selectable but did
+			// not match (disabled/filtered). A bound pool whose members are all
+			// resting keeps its binding (poolResting=true skips the clear) so the
+			// strict session returns to the same pool once a member cools down.
 			if !affinityUsable && !poolResting && !ShouldKeepChannelAffinityOnChannelDisabled() {
 				ClearCurrentChannelAffinityCache(c)
 			}
-			// A strict session whose pool is intact but fully resting falls
-			// through to pool selection (which waits for a cooldown or falls
-			// back to the next tier) instead of erroring; the binding is kept
-			// so later requests return to the same pool.
-			if !affinityUsable && RequestPolicy(c).SessionMode == "strict" && !poolResting {
+			// A strict session whose bound channel cannot serve the request fails
+			// fast instead of rerouting: "strict" promises not to serve the request
+			// from a different channel. This covers both a bound channel that is
+			// disabled/filtered out and a bound pool whose members are all resting.
+			// The binding is retained (see the clear above) either way.
+			if !affinityUsable && RequestPolicy(c).SessionMode == "strict" {
 				return nil, "", &ChannelSelectError{StatusCode: http.StatusServiceUnavailable, Message: "strict_session_binding_unavailable"}
 			}
 		}
